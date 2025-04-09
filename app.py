@@ -1,50 +1,77 @@
 import streamlit as st
 import pandas as pd
+import json
+from google.oauth2 import service_account
+from google.analytics.data_v1beta import BetaAnalyticsDataClient
+from google.analytics.data_v1beta.types import DateRange, Dimension, Metric, RunReportRequest
+import searchconsole
 
-st.set_page_config(page_title="SEO Audit Tool", layout="wide")
-st.title("🔍 SEO Audit Tool (Base)")
+st.set_page_config(page_title="SEO GSC + GA4 Analyzer", layout="wide")
+st.title("🔍 SEO Analyzer: Search Console + GA4")
 
-st.markdown("""
-Questo strumento ti permette di caricare un file CSV (esportato da Search Console, Screaming Frog o altri) e analizzare:
-- Pagine senza `<title>` o `<h1>`
-- Descrizioni duplicate o mancanti
-- Pagine con CTR basso o impression alte
-""")
+# --- Credenziali da st.secrets ---
+try:
+    creds_dict = json.loads(st.secrets["GCP_SERVICE_ACCOUNT"])
+    credentials = service_account.Credentials.from_service_account_info(creds_dict)
+    st.success("Credenziali caricate correttamente!")
+except Exception as e:
+    st.error(f"Errore nel caricamento delle credenziali: {e}")
+    st.stop()
 
-# Upload file CSV
-uploaded_file = st.file_uploader("Carica un file CSV con le pagine del sito", type=["csv"])
+# --- Input utente ---
+st.sidebar.header("Parametri")
+property_url = st.sidebar.text_input("Dominio GSC", "https://www.tuosito.com")
+ga4_property_id = st.sidebar.text_input("GA4 Property ID", "123456789")
+start_date = st.sidebar.date_input("Data inizio")
+end_date = st.sidebar.date_input("Data fine")
 
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
-    st.success("File caricato correttamente!")
-    st.dataframe(df.head())
+if start_date and end_date and property_url and ga4_property_id:
 
-    col1, col2 = st.columns(2)
+    # --- Search Console ---
+    st.subheader("🔎 Google Search Console")
+    try:
+        account = searchconsole.authenticate(client_config=creds_dict)
+        webproperty = account[property_url]
+        report = webproperty.query.range(str(start_date), str(end_date)) \
+            .dimension('page') \
+            .metric('clicks', 'impressions', 'ctr', 'position') \
+            .execute()
+        gsc_df = report.to_dataframe()
+        gsc_df['page_normalized'] = gsc_df['page'].str.replace(property_url, '')
+        st.dataframe(gsc_df)
+    except Exception as e:
+        st.error(f"Errore GSC: {e}")
 
-    with col1:
-        if "title" in df.columns:
-            missing_title = df[df['title'].isnull() | (df['title'].str.strip() == '')]
-            st.subheader("🔴 Title mancanti")
-            st.dataframe(missing_title)
+    # --- GA4 ---
+    st.subheader("📈 Google Analytics 4")
+    try:
+        client = BetaAnalyticsDataClient(credentials=credentials)
+        request = RunReportRequest(
+            property=f"properties/{ga4_property_id}",
+            dimensions=[Dimension(name="pagePath")],
+            metrics=[Metric(name="sessions"), Metric(name="engagedSessions")],
+            date_ranges=[DateRange(start_date=str(start_date), end_date=str(end_date))]
+        )
+        response = client.run_report(request)
+        ga4_df = pd.DataFrame([
+            {
+                "pagePath": row.dimension_values[0].value,
+                "sessions": int(row.metric_values[0].value),
+                "engagedSessions": int(row.metric_values[1].value)
+            }
+            for row in response.rows
+        ])
+        ga4_df['page_normalized'] = ga4_df['pagePath']
+        st.dataframe(ga4_df)
+    except Exception as e:
+        st.error(f"Errore GA4: {e}")
 
-        if "meta_description" in df.columns:
-            missing_desc = df[df['meta_description'].isnull() | (df['meta_description'].str.strip() == '')]
-            duplicated_desc = df[df.duplicated('meta_description', keep=False) & df['meta_description'].notnull()]
-            st.subheader("🟡 Meta Description duplicate")
-            st.dataframe(duplicated_desc)
-            st.subheader("🔴 Meta Description mancanti")
-            st.dataframe(missing_desc)
-
-    with col2:
-        if "h1" in df.columns:
-            missing_h1 = df[df['h1'].isnull() | (df['h1'].str.strip() == '')]
-            duplicated_h1 = df[df.duplicated('h1', keep=False) & df['h1'].notnull()]
-            st.subheader("🔴 H1 mancanti")
-            st.dataframe(missing_h1)
-            st.subheader("🟡 H1 duplicati")
-            st.dataframe(duplicated_h1)
-
-    # Esporta CSV filtrato
-    st.subheader("⬇️ Scarica i risultati (filtrati)")
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("Download completo", csv, "seo_audit_completo.csv", "text/csv")
+    # --- Merge GSC + GA4 ---
+    st.subheader("🔗 Dati combinati GSC + GA4")
+    try:
+        merged = pd.merge(gsc_df, ga4_df, on="page_normalized", how="outer")
+        st.dataframe(merged)
+        csv = merged.to_csv(index=False).encode('utf-8')
+        st.download_button("⬇️ Scarica dati combinati", csv, "seo_merged.csv", "text/csv")
+    except Exception as e:
+        st.error(f"Errore nel merge: {e}")
