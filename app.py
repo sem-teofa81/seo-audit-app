@@ -6,19 +6,21 @@ from google.oauth2 import service_account
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import DateRange, Dimension, Metric, RunReportRequest
 import searchconsole
+from io import StringIO
 
 st.set_page_config(page_title="SEO GSC + GA4 Analyzer", layout="wide")
 st.title("🔍 SEO Analyzer: Search Console + GA4")
 
 # --- Credenziali da st.secrets ---
 try:
-    creds_dict = json.loads(st.secrets["GCP_SERVICE_ACCOUNT"])
+    creds_str = st.secrets["GCP_SERVICE_ACCOUNT"]
+    creds_dict = json.loads(creds_str)
     credentials = service_account.Credentials.from_service_account_info(creds_dict)
     st.success("Credenziali caricate correttamente!")
 
     # Salva il JSON in un file temporaneo per Search Console
     with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".json") as temp_file:
-        json.dump(creds_dict, temp_file)
+        temp_file.write(creds_str)
         temp_file.flush()
         temp_json_path = temp_file.name
 
@@ -28,8 +30,8 @@ except Exception as e:
 
 # --- Input utente ---
 st.sidebar.header("Parametri")
-property_url = st.sidebar.text_input("Dominio GSC", "https://www.tuosito.com")
-ga4_property_id = st.sidebar.text_input("GA4 Property ID", "123456789")
+property_url = st.sidebar.text_input("Dominio GSC", "https://re-pack.it/")
+ga4_property_id = st.sidebar.text_input("GA4 Property ID", "347608976")
 start_date = st.sidebar.date_input("Data inizio")
 end_date = st.sidebar.date_input("Data fine")
 
