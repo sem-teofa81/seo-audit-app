@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import json
+import tempfile
 from google.oauth2 import service_account
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import DateRange, Dimension, Metric, RunReportRequest
@@ -14,6 +15,13 @@ try:
     creds_dict = json.loads(st.secrets["GCP_SERVICE_ACCOUNT"])
     credentials = service_account.Credentials.from_service_account_info(creds_dict)
     st.success("Credenziali caricate correttamente!")
+
+    # Salva il JSON in un file temporaneo per Search Console
+    with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".json") as temp_file:
+        json.dump(creds_dict, temp_file)
+        temp_file.flush()
+        temp_json_path = temp_file.name
+
 except Exception as e:
     st.error(f"Errore nel caricamento delle credenziali: {e}")
     st.stop()
@@ -30,7 +38,7 @@ if start_date and end_date and property_url and ga4_property_id:
     # --- Search Console ---
     st.subheader("🔎 Google Search Console")
     try:
-        account = searchconsole.authenticate(client_config=creds_dict)
+        account = searchconsole.authenticate(client_config=temp_json_path)
         webproperty = account[property_url]
         report = webproperty.query.range(str(start_date), str(end_date)) \
             .dimension('page') \
